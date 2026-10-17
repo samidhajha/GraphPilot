@@ -219,4 +219,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 # Node
+# Node
 node_modules/
+
+# GraphPilot local database
+backend/graphpilot.db

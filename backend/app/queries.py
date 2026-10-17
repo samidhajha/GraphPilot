@@ -93,7 +93,7 @@ MATCH (s:InventorySnapshot)-[:OF_PRODUCT]->(p:Product)
 WHERE p.product_id IN $pids AND s.snapshot_date <= $as_of
 OPTIONAL MATCH (s)-[:AT_BRANCH]->(b:Branch)
 OPTIONAL MATCH (s)-[:AT_WAREHOUSE]->(w:Warehouse)
-RETURN p.product_id, coalesce(b.branch_id, w.warehouse_id), s.snapshot_date, s.stock_on_hand
+RETURN p.product_id, coalesce(b.branch_id, w.warehouse_id), s.snapshot_date, s.stock_on_hand, s.snapshot_id
 """
 
 # Other warehouses serving branches that stock the same products (transfer donors / not-exposed branches)
@@ -108,4 +108,50 @@ Q_ALT_SUPPLIERS = """
 MATCH (s:Supplier)-[:SUPPLIES]->(p:Product)
 WHERE p.product_id IN $pids AND s.supplier_id <> $supplier_id
 RETURN p.product_id, s.supplier_id, s.lead_time_days
+"""
+
+# Every purchase order with its supplier (used to scan for disruptions)
+Q_ALL_POS = """
+MATCH (s:Supplier)-[:HAS_ORDER]->(po:PurchaseOrder)
+RETURN po.po_id, po.status, po.expected_date, po.revised_expected_date, po.actual_delivery_date, s.supplier_id, s.name
+ORDER BY po.po_id
+"""
+
+# Open POs that deliver a product to the warehouse feeding a branch (symptom -> cause)
+Q_UPSTREAM_POS = """
+MATCH (b:Branch {branch_id: $bid})<-[:REPLENISHES]-(:Warehouse)<-[:DELIVERS_TO]-(po:PurchaseOrder)-[:CONTAINS]->(p:Product {product_id: $pid})
+WHERE po.status IN ['open', 'partially_received']
+RETURN po.po_id, po.status, po.expected_date, po.revised_expected_date, po.actual_delivery_date
+ORDER BY po.po_id
+"""
+
+Q_BRANCH_PRODUCT_EXISTS = """
+MATCH (p:Product {product_id: $pid}), (b:Branch {branch_id: $bid})
+RETURN count(*)
+"""
+
+# Other open orders bringing the same products to the same warehouse
+Q_ALT_INBOUND = """
+MATCH (po:PurchaseOrder)-[:CONTAINS]->(p:Product), (po)-[:DELIVERS_TO]->(:Warehouse {warehouse_id: $wh_id})
+WHERE p.product_id IN $pids AND po.po_id <> $po_id AND po.status IN ['open', 'partially_received']
+RETURN po.po_id, p.product_id
+"""
+
+# Graph pieces for the UI (nodes and edges returned together)
+Q_IMPACT_GRAPH = """
+MATCH (s:Supplier)-[ho:HAS_ORDER]->(po:PurchaseOrder {po_id: $po_id})-[c:CONTAINS]->(p:Product),
+      (po)-[d:DELIVERS_TO]->(w:Warehouse)-[rp:REPLENISHES]->(b:Branch)-[st:STOCKS]->(p)
+RETURN s, ho, po, c, p, d, w, rp, b, st
+"""
+
+Q_ALT_GRAPH = """
+MATCH (s:Supplier)-[r:SUPPLIES]->(p:Product)
+WHERE p.product_id IN $pids AND s.supplier_id <> $supplier_id
+RETURN s, r, p
+"""
+
+Q_OTHER_WH_GRAPH = """
+MATCH (w:Warehouse)-[rp:REPLENISHES]->(b:Branch)-[st:STOCKS]->(p:Product)
+WHERE p.product_id IN $pids AND w.warehouse_id <> $wh_id
+RETURN w, rp, b, st, p
 """
